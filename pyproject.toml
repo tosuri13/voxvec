@@ -21,3 +21,9 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+unfixable = [
+    "F401", # unused import
+    "F841", # unused variable
+]
