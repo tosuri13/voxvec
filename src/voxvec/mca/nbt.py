@@ -8,6 +8,8 @@ from typing import ClassVar, Self, override
 
 import numpy as np
 
+from voxvec.mca import _io
+
 __all__ = [
     "ByteArrayTag",
     "ByteTag",
@@ -76,12 +78,12 @@ class ScalarTag[T: (int, float)](Tag):
 
     @override
     @classmethod
-    def read(cls, f: Reader[bytes]):
-        (value,) = _unpack(f, cls.FORMAT)
+    def read(cls, f: Reader[bytes]) -> Self:
+        (value,) = _io.unpack(f, cls.FORMAT)
         return cls(value)
 
     @override
-    def write(self, f: Writer[bytes]):
+    def write(self, f: Writer[bytes]) -> None:
         f.write(self.FORMAT.pack(self.value))
 
 
@@ -123,13 +125,13 @@ class ArrayTag(Tag):
 
     @override
     @classmethod
-    def read(cls, f: Reader[bytes]):
-        (length,) = _unpack(f, Format.INT)
-        data = _read_exact(f, length * cls.DTYPE.itemsize)
+    def read(cls, f: Reader[bytes]) -> Self:
+        (length,) = _io.unpack(f, Format.INT)
+        data = _io.read_exact(f, length * cls.DTYPE.itemsize)
         return cls(np.frombuffer(data, dtype=cls.DTYPE))
 
     @override
-    def write(self, f: Writer[bytes]):
+    def write(self, f: Writer[bytes]) -> None:
         array = np.asarray(self.value, dtype=self.DTYPE)
         f.write(Format.INT.pack(len(array)))
         f.write(array.tobytes())
@@ -158,11 +160,11 @@ class StringTag(Tag):
 
     @override
     @classmethod
-    def read(cls, f: Reader[bytes]):
+    def read(cls, f: Reader[bytes]) -> Self:
         return cls(_read_string(f))
 
     @override
-    def write(self, f: Writer[bytes]):
+    def write(self, f: Writer[bytes]) -> None:
         _write_string(f, self.value)
 
 
@@ -173,31 +175,31 @@ class ListTag(Tag):
     item_type: TagType
     items: list[Tag]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._check_items()
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> Tag:
         return self.items[index]
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.items)
 
     @override
     @classmethod
-    def read(cls, f: Reader[bytes]):
+    def read(cls, f: Reader[bytes]) -> Self:
         item_type = _read_type(f)
-        (length,) = _unpack(f, Format.INT)
+        (length,) = _io.unpack(f, Format.INT)
         return cls(item_type, [TAG_BY_TYPE[item_type].read(f) for _ in range(length)])
 
     @override
-    def write(self, f: Writer[bytes]):
+    def write(self, f: Writer[bytes]) -> None:
         self._check_items()
         f.write(bytes([self.item_type]))
         f.write(Format.INT.pack(len(self.items)))
         for item in self.items:
             item.write(f)
 
-    def _check_items(self):
+    def _check_items(self) -> None:
         for item in self.items:
             if item.TYPE != self.item_type:
                 raise TypeError(
@@ -211,10 +213,10 @@ class CompoundTag(Tag):
 
     value: dict[str, Tag]
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> Tag:
         return self.value[key]
 
-    def get[T: Tag](self, key: str, tag_class: type[T]):
+    def get[T: Tag](self, key: str, tag_class: type[T]) -> T:
         tag = self.value[key]
         if not isinstance(tag, tag_class):
             raise TypeError(
@@ -224,7 +226,7 @@ class CompoundTag(Tag):
 
     @override
     @classmethod
-    def read(cls, f: Reader[bytes]):
+    def read(cls, f: Reader[bytes]) -> Self:
         value = {}
         while (tag_type := _read_type(f)) != TagType.END:
             name = _read_string(f)
@@ -232,7 +234,7 @@ class CompoundTag(Tag):
         return cls(value)
 
     @override
-    def write(self, f: Writer[bytes]):
+    def write(self, f: Writer[bytes]) -> None:
         for name, tag in self.value.items():
             f.write(bytes([tag.TYPE]))
             _write_string(f, name)
@@ -280,27 +282,16 @@ def dumps(tag: CompoundTag) -> bytes:
     return f.getvalue()
 
 
-def _read_exact(f: Reader[bytes], size: int):
-    data = f.read(size)
-    if len(data) != size:
-        raise EOFError(f"expected {size} bytes, got {len(data)}")
-    return data
+def _read_type(f: Reader[bytes]) -> TagType:
+    return TagType(_io.read_exact(f, 1)[0])
 
 
-def _unpack(f: Reader[bytes], fmt: Struct):
-    return fmt.unpack(_read_exact(f, fmt.size))
+def _read_string(f: Reader[bytes]) -> str:
+    (length,) = _io.unpack(f, Format.USHORT)
+    return _io.read_exact(f, length).decode("utf-8")
 
 
-def _read_type(f: Reader[bytes]):
-    return TagType(_read_exact(f, 1)[0])
-
-
-def _read_string(f: Reader[bytes]):
-    (length,) = _unpack(f, Format.USHORT)
-    return _read_exact(f, length).decode("utf-8")
-
-
-def _write_string(f: Writer[bytes], value: str):
+def _write_string(f: Writer[bytes], value: str) -> None:
     data = value.encode("utf-8")
     f.write(Format.USHORT.pack(len(data)))
     f.write(data)
